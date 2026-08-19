@@ -1,0 +1,524 @@
+// LeadForge AI — database schema
+// PostgreSQL + Prisma. Multi-tenant: every tenant-owned row carries organizationId.
+//
+// Design notes:
+// - Auth.js (NextAuth v5) compatible models: User, Account, Session, VerificationToken.
+// - Tenancy: User <-> Organization is many-to-many via Membership (with a role).
+//   Every tenant-owned table has organizationId + an index on it; scope ALL queries by it.
+// - Money/credits: the source of truth for "can this run?" is Organization.creditsRemaining,
+//   decremented atomically (see src/lib/credits). UsageRecord is the append-only audit trail.
+// - Dedup (§13): Lead has a dedupeHash unique per org, plus normalized domain/phone for
+//   softer matching. See src/lib/providers/normalize.ts.
+// - Soft delete: tenant content uses deletedAt (null = live). Filter it in every query.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auth & identity
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  emailVerified DateTime?
+  passwordHash  String? // only if you enable credentials login alongside OAuth
+
+  memberships Membership[]
+  accounts    Account[]
+  sessions    Session[]
+  auditLogs   AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+// Auth.js adapter models (OAuth providers, sessions, email-verification tokens).
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tenancy
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Organization {
+  id     String @id @default(cuid())
+  name   String
+  slug   String @unique
+
+  // Billing / plan snapshot on the org for fast auth checks (§19).
+  planKey            String   @default("free")
+  stripeCustomerId   String?  @unique
+  stripeSubscriptionId String? @unique
+  subscriptionStatus String?  // active | trialing | past_due | canceled | incomplete
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+
+  // Credit balance is the atomic gate for spending money on providers (§20).
+  // Reset to plan.monthlyLeadCredits at each period rollover.
+  creditsRemaining Int @default(100)
+  creditsPeriodEnd DateTime?
+
+  memberships  Membership[]
+  leads        Lead[]
+  searches     Search[]
+  exports      Export[]
+  integrations Integration[]
+  apiKeys      ApiKey[]
+  usageRecords UsageRecord[]
+  subscription Subscription?
+  auditLogs    AuditLog[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@map("organizations")
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model Membership {
+  id             String     @id @default(cuid())
+  userId         String
+  organizationId String
+  role           MemberRole @default(MEMBER)
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@map("memberships")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plans & billing
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Plans live in code (src/lib/plans) and are seeded here so subscriptions can FK
+// to a stable row and the DB reflects current pricing. Edit the config, re-seed.
+model Plan {
+  key                String  @id // "free" | "starter" | "pro" | "agency"
+  name               String
+  priceMonthlyCents  Int     @default(0)
+  monthlyLeadCredits Int
+  maxActiveSearches  Int // -1 = unlimited
+  maxSeats           Int
+  stripePriceId      String?
+  featuresJson       Json // capability flags: enrichment, aiScoring, googleSheets, apiAccess, priority
+  isActive           Boolean @default(true)
+
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model Subscription {
+  id             String   @id @default(cuid())
+  organizationId String   @unique
+  planKey        String
+  status         String // mirrors Stripe subscription.status
+  stripeSubscriptionId String? @unique
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean  @default(false)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan         Plan         @relation(fields: [planKey], references: [key])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([planKey])
+  @@map("subscriptions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Searches & jobs
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum SearchStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  PARTIAL
+}
+
+model Search {
+  id             String       @id @default(cuid())
+  organizationId String
+  createdByUserId String?
+
+  name        String
+  category    String
+  city        String?
+  region      String?
+  country     String?
+  postalCode  String?
+  leadsRequested Int
+  filtersJson Json? // has_website, has_email, min_score, etc. (§5)
+
+  status     SearchStatus @default(PENDING)
+  leadsFound Int          @default(0)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  jobs         SearchJob[]
+  leads        Lead[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+  @@map("searches")
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  RETRYING
+}
+
+// One row per pipeline unit of work. A discovery job fans out into per-lead
+// enrichment jobs (§7, §21). stage lets the UI render the progress checklist.
+model SearchJob {
+  id             String    @id @default(cuid())
+  organizationId String
+  searchId       String
+  leadId         String? // null for the discovery job; set for per-lead enrichment/scoring
+
+  stage       String // discovery | website | email | social | contact | verify | score
+  status      JobStatus @default(QUEUED)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+  queueJobId  String? // BullMQ job id, for correlation
+  error       String?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+
+  search Search @relation(fields: [searchId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([searchId, stage])
+  @@index([status])
+  @@map("search_jobs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Leads
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  INTERESTED
+  QUALIFIED
+  MEETING_BOOKED
+  CUSTOMER
+  NOT_INTERESTED
+  LOST
+}
+
+enum EmailStatus {
+  UNKNOWN
+  VALID
+  INVALID
+  RISKY
+}
+
+model Lead {
+  id             String @id @default(cuid())
+  organizationId String
+  searchId       String?
+
+  // Core business fields (§1). Missing data stays null — never fabricated.
+  businessName String
+  category     String?
+  industry     String?
+  website      String?
+  websiteDomain String? // normalized host for dedup/matching
+  email        String?
+  emailStatus  EmailStatus @default(UNKNOWN)
+  emailSource  String?
+  emailVerifiedAt DateTime?
+  phone        String?
+  phoneNormalized String? // E.164 where possible
+  address      String?
+  city         String?
+  region       String?
+  country      String?
+  postalCode   String?
+  companySize  String?
+
+  googleProfileUrl String?
+
+  status     LeadStatus @default(NEW)
+  /// Denormalized copy of LeadScore.score for fast filter/sort/index on the
+  /// lead table. Kept in sync whenever the scoring worker writes a LeadScore.
+  leadScore  Int?
+  source     String? // provider key that produced this lead
+  sourceId   String? // provider's stable id for the business
+
+  // Dedup (§13): hash over sourceId | domain | phone | (name+location).
+  dedupeHash String
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  search       Search?        @relation(fields: [searchId], references: [id], onDelete: SetNull)
+  contacts     LeadContact[]
+  socials      LeadSocial[]
+  score        LeadScore?
+  activities   LeadActivity[]
+
+  discoveredAt DateTime  @default(now())
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  // A given business appears once per org, no matter how many searches surface it.
+  @@unique([organizationId, dedupeHash])
+  @@index([organizationId, status])
+  @@index([organizationId, leadScore])
+  @@index([organizationId, websiteDomain])
+  @@index([organizationId, createdAt])
+  @@map("leads")
+}
+
+model LeadContact {
+  id       String  @id @default(cuid())
+  leadId   String
+  name     String?
+  jobTitle String?
+  email    String?
+  phone    String?
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([leadId])
+  @@map("lead_contacts")
+}
+
+enum SocialPlatform {
+  LINKEDIN
+  FACEBOOK
+  INSTAGRAM
+  TWITTER
+  YOUTUBE
+  TIKTOK
+}
+
+model LeadSocial {
+  id       String         @id @default(cuid())
+  leadId   String
+  platform SocialPlatform
+  url      String // normalized before storing (§9)
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([leadId, platform]) // no duplicate social per platform per lead
+  @@index([leadId])
+  @@map("lead_socials")
+}
+
+model LeadScore {
+  id           String   @id @default(cuid())
+  leadId       String   @unique
+  score        Int // 0–100
+  quality      String // Poor | Fair | Good | Excellent
+  reasonsJson  Json // array of contributing factors
+  outreachAngle String?
+  model        String? // which scoring model/version produced this
+  scoredAt     DateTime @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@map("lead_scores")
+}
+
+model LeadActivity {
+  id      String @id @default(cuid())
+  leadId  String
+  type    String // discovered | email_verified | exported | contacted | reply_received | status_changed
+  metaJson Json?
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([leadId, createdAt])
+  @@map("lead_activities")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Exports & integrations
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum ExportStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model Export {
+  id             String       @id @default(cuid())
+  organizationId String
+  createdByUserId String?
+  format         String // csv | excel_csv | google_sheets
+  status         ExportStatus @default(PENDING)
+  leadCount      Int          @default(0)
+  destination    String? // sheet URL, file path, etc.
+  filtersJson    Json?
+  error          String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, createdAt])
+  @@map("exports")
+}
+
+model Integration {
+  id             String  @id @default(cuid())
+  organizationId String
+  provider       String // google_sheets | hubspot | salesforce | pipedrive
+  status         String  @default("connected")
+  // Tokens are encrypted at the application layer before persisting — never plaintext.
+  encryptedCredentials String? @db.Text
+  metadataJson   Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, provider])
+  @@index([organizationId])
+  @@map("integrations")
+}
+
+model ApiKey {
+  id             String    @id @default(cuid())
+  organizationId String
+  name           String
+  // Store only a hash of the key; show the plaintext once at creation time.
+  keyHash        String    @unique
+  keyPrefix      String // first chars, for display ("lf_live_ab…")
+  lastUsedAt     DateTime?
+  revokedAt      DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@map("api_keys")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Usage & audit
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Append-only meter (§20). One row per billable event. Sum over a period for the
+// usage bars. The atomic gate lives on Organization.creditsRemaining; this is audit.
+model UsageRecord {
+  id             String   @id @default(cuid())
+  organizationId String
+  kind           String // lead_generated | enrichment | email_verification | export | api_request
+  quantity       Int      @default(1)
+  searchId       String?
+  metaJson       Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, kind, createdAt])
+  @@map("usage_records")
+}
+
+model AuditLog {
+  id             String  @id @default(cuid())
+  organizationId String?
+  userId         String?
+  action         String
+  targetType     String?
+  targetId       String?
+  ip             String?
+  metaJson       Json?
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@map("audit_logs")
+}

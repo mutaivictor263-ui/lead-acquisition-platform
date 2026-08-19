@@ -1,0 +1,15 @@
+node_modules/
+.next/
+.env
+.env.local
+.env.*.local
+
+coverage/
+
+prisma/*.db
+prisma/*.db-journal
+
+*.log
+
+.DS_Store
+Thumbs.db

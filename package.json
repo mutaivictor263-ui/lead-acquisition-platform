@@ -1,0 +1,47 @@
+{
+  "name": "lead-acquisition-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lead generation SaaS platform",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "worker": "tsx src/workers/discovery.worker.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@auth/prisma-adapter": "^2.11.1",
+    "@prisma/client": "^6.19.3",
+    "bullmq": "^5.58.5",
+    "ioredis": "^5.7.0",
+    "next": "^15.5.0",
+    "next-auth": "^5.0.0-beta.29",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "zod": "^4.0.17"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "prisma": "^6.19.3",
+    "tsx": "^4.20.4",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "allowScripts": {
+    "@prisma/client@6.19.3": true,
+    "esbuild@0.28.2": true,
+    "msgpackr-extract@3.0.4": true,
+    "sharp@0.34.5": true,
+    "@prisma/engines@7.9.1": true,
+    "prisma@7.9.1": true
+  }
+}
