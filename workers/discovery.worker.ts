@@ -11,6 +11,8 @@
  * Redis, so it runs in your repo, not the build sandbox.
  */
 
+import "dotenv/config";
+
 import { Worker } from "bullmq";
 
 import { connection, QUEUE, enqueueEnrichment, type DiscoveryJobData } from "../src/lib/jobs/queue";

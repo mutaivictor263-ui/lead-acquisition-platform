@@ -87,17 +87,17 @@ export async function enqueueDiscovery(
   opts: { priority?: number } = {},
 ): Promise<void> {
   await discoveryQueue.add("discover", data, {
-    jobId: `discovery:${data.searchId}`,
+    jobId: `discovery-${data.searchId}`,
     priority: opts.priority,
   });
 }
 
 /** Fan-out helper the discovery worker calls once per created lead. */
 export async function enqueueEnrichment(data: EnrichmentJobData): Promise<void> {
-  await enrichmentQueue.add("enrich", data, { jobId: `enrich:${data.leadId}` });
+  await enrichmentQueue.add("enrich", data, { jobId: `enrich-${data.leadId}`, });
 }
 
 /** Enqueued by the enrichment worker on success. */
 export async function enqueueScoring(data: ScoringJobData): Promise<void> {
-  await scoringQueue.add("score", data, { jobId: `score:${data.leadId}` });
+  await scoringQueue.add("score", data, { jobId: `score-${data.leadId}`, });
 }

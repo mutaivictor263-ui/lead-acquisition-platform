@@ -12,6 +12,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "worker": "tsx workers/discovery.worker.ts",
+    "worker:enrichment": "tsx workers/enrichment.worker.ts",
+    "worker:scoring": "tsx workers/scoring.worker.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio"

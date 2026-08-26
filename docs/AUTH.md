@@ -51,3 +51,11 @@ which keeps the Prisma adapter on the Node runtime.
 No schema change: the existing `User` / `Account` / `Session` /
 `VerificationToken` models already satisfy `@auth/prisma-adapter`, so no
 migration is needed for this batch.
+
+
+npm run prisma:generate
+npx prisma validate
+npm run typecheck
+npm test
+npm run build
+git status

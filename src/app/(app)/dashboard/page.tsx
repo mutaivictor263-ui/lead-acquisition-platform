@@ -3,6 +3,8 @@
  * signed-in user -> resolved personal org -> scoped tenant context. Reads the
  * org through the tenant context and shows a sign-out action.
  */
+import Link from "next/link";
+
 import { signOut } from "@/auth";
 import { prisma } from "@/lib/db/client";
 import { currentUser, requireCurrentTenant } from "@/lib/auth/current-user";
@@ -38,6 +40,10 @@ export default async function DashboardPage() {
           <li>Your role: {ctx.role}</li>
         </ul>
       </section>
+
+      <p style={{ marginTop: 24 }}>
+        <Link href="/searches">Go to searches →</Link>
+      </p>
 
       <form action={signOutAction} style={{ marginTop: 24 }}>
         <button
