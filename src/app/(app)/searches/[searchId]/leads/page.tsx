@@ -93,6 +93,20 @@ export default async function LeadsPage({
         <span style={{ color: "#666" }}>
           {search.leadsFound} / {search.leadsRequested} leads
         </span>
+        <a
+          href={`/api/searches/${searchId}/leads/export${buildQuery(input, 1)}`}
+          style={{
+            marginLeft: "auto",
+            padding: "6px 12px",
+            border: "1px solid #ccc",
+            borderRadius: 6,
+            textDecoration: "none",
+            color: "#333",
+            fontSize: 14,
+          }}
+        >
+          Export CSV
+        </a>
       </div>
 
       {/* Filters (plain GET form — resets to page 1 on submit) */}
@@ -196,3 +210,4 @@ export default async function LeadsPage({
     </main>
   );
 }
+
