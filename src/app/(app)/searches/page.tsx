@@ -86,7 +86,9 @@ export default async function SearchesPage({ searchParams }: { searchParams: Sea
           <tbody>
             {searches.map((s) => (
               <tr key={s.id}>
-                <td style={cell}>{s.name}</td>
+                <td style={cell}>
+                  <Link href={`/searches/${s.id}/leads`}>{s.name}</Link>
+                </td>
                 <td style={cell}>{[s.city, s.region, s.country].filter(Boolean).join(", ") || "—"}</td>
                 <td style={{ ...cell, color: statusColor[s.status] ?? "#333", fontWeight: 600 }}>{s.status}</td>
                 <td style={cell}>
