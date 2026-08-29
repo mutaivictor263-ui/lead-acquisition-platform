@@ -11,13 +11,11 @@
  * Redis, so it runs in your repo, not the build sandbox.
  */
 
-import "dotenv/config";
-
 import { Worker } from "bullmq";
 
 import { connection, QUEUE, enqueueEnrichment, type DiscoveryJobData } from "../src/lib/jobs/queue";
 import { processDiscovery } from "../src/lib/jobs/discovery";
-import { consumeCredits, InsufficientCreditsError } from "../src/lib/credits/consume";
+import { consumeCredits, ensureCreditsForPeriod, InsufficientCreditsError } from "../src/lib/credits/consume";
 import { providerRegistry } from "../src/lib/providers/lead_providers";
 import { prisma } from "../src/lib/db/client";
 
@@ -30,6 +28,9 @@ const worker = new Worker<DiscoveryJobData>(
     await prisma.search.update({ where: { id: searchId }, data: { status: "RUNNING" } });
 
     const provider = providerRegistry.resolve(providerKey);
+
+    // Roll the credit period if it expired, before any per-lead credit is spent.
+    await ensureCreditsForPeriod(prisma, organizationId);
 
     return processDiscovery(
       {

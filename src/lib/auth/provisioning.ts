@@ -19,6 +19,7 @@ import { randomBytes } from "node:crypto";
 import { Prisma, MemberRole } from "@prisma/client";
 
 import { prisma } from "@/lib/db/client";
+import { nextPeriodEnd } from "../credits/consume";
 
 const MAX_SLUG_ATTEMPTS = 5;
 
@@ -75,7 +76,7 @@ export async function ensurePersonalOrganization(userId: string): Promise<string
     try {
       const org = await prisma.$transaction(async (tx) => {
         const created = await tx.organization.create({
-          data: { name, slug },
+          data: { name, slug, creditsPeriodEnd: nextPeriodEnd(new Date()) },
           select: { id: true },
         });
         await tx.membership.create({

@@ -17,6 +17,8 @@
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 
+import { getPlan } from "../plans/plans";
+
 export type UsageKind =
   | "lead_generated"
   | "enrichment"
@@ -114,4 +116,83 @@ export async function resetCreditsForPeriod(
     where: { id: organizationId },
     data: { creditsRemaining: monthlyLeadCredits, creditsPeriodEnd: periodEnd },
   });
+}
+
+/**
+ * Advance a date by exactly one calendar month (UTC), clamping the day to the
+ * last valid day of the target month so it never overflows into the following
+ * one. Pure and deterministic.
+ *
+ *   Jan 31 -> Feb 28 (or Feb 29 in a leap year)
+ *   Dec 15 -> Jan 15 of the next year
+ */
+export function nextPeriodEnd(from: Date): Date {
+  const year = from.getUTCFullYear();
+  const month = from.getUTCMonth();
+  const day = from.getUTCDate();
+
+  const targetYear = month === 11 ? year + 1 : year;
+  const targetMonth = (month + 1) % 12;
+
+  // Day 0 of (targetMonth + 1) is the last day of targetMonth.
+  const lastDayOfTarget = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+  const clampedDay = Math.min(day, lastDayOfTarget);
+
+  return new Date(
+    Date.UTC(
+      targetYear,
+      targetMonth,
+      clampedDay,
+      from.getUTCHours(),
+      from.getUTCMinutes(),
+      from.getUTCSeconds(),
+      from.getUTCMilliseconds(),
+    ),
+  );
+}
+
+/**
+ * Lazily roll the organization's credit period if it has expired (or was never
+ * initialized), refilling to the plan allowance. Safe to call on any hot path
+ * before credits are spent.
+ *
+ * Concurrency invariant: the refill is a SINGLE atomic conditional updateMany
+ * that (a) guards on the exact period boundary that was read — so only one
+ * concurrent caller wins per expired period (losers match 0 rows and no-op),
+ * and (b) adjusts the balance RELATIVELY (`increment: delta`, delta = allowance
+ * - balanceRead) rather than assigning an absolute value. Because the write is
+ * relative, a consume or refund that commits between the read and the reset is
+ * preserved, never overwritten:
+ *
+ *   allowance 100, read balance 3 -> delta 97
+ *   concurrent consume: 3 -> 2
+ *   reset: 2 + 97 -> 99   (the -1 is kept)
+ */
+export async function ensureCreditsForPeriod(
+  prisma: PrismaClient,
+  organizationId: string,
+): Promise<void> {
+  const org = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { planKey: true, creditsRemaining: true, creditsPeriodEnd: true },
+  });
+  if (!org) return;
+
+  const now = new Date();
+  // Live period -> nothing to do.
+  if (org.creditsPeriodEnd !== null && org.creditsPeriodEnd > now) return;
+
+  const allowance = getPlan(org.planKey).monthlyLeadCredits;
+  const delta = allowance - org.creditsRemaining;
+  // Drift-free: anchor the next boundary to the stored one; null anchors to now.
+  const next = nextPeriodEnd(org.creditsPeriodEnd ?? now);
+
+  // Optimistic-concurrency reset. The WHERE matches the EXACT boundary we read
+  // (a Date, or null via `creditsPeriodEnd: null` => IS NULL), so only the first
+  // concurrent caller updates the row; others get count === 0.
+  await prisma.organization.updateMany({
+    where: { id: organizationId, creditsPeriodEnd: org.creditsPeriodEnd },
+    data: { creditsRemaining: { increment: delta }, creditsPeriodEnd: next },
+  });
+  // count === 0 => a concurrent caller already rolled this period; no-op.
 }
