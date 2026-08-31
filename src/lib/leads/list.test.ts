@@ -5,7 +5,7 @@
  * Integration tests that hit a real Postgres can layer on later.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { MemberRole } from "@prisma/client";
 
 import type { TenantContext } from "../tenant/scope";
@@ -16,6 +16,7 @@ import {
   mapLead,
   applySearchScope,
   leadsQuerySchema,
+  getSearchProgress,
   type LeadRowWithRelations,
 } from "./list";
 
@@ -170,5 +171,82 @@ describe("leadsQuerySchema", () => {
 
   it("rejects an invalid sort field", () => {
     expect(leadsQuerySchema.safeParse({ sort: "nope" }).success).toBe(false);
+  });
+});
+
+// ── getSearchProgress ────────────────────────────────────────────────────────
+
+type CountArg = { where: Record<string, unknown> };
+
+/** Mock prisma whose lead.count returns `scored` when the where carries a score
+ *  filter, else `total`. Captures both call args for scoping assertions. */
+function progressPrisma(total: number, scored: number) {
+  const count = vi.fn(async (arg: CountArg) => ("score" in arg.where ? scored : total));
+  const prisma = { lead: { count } } as unknown as import("@prisma/client").PrismaClient;
+  return { prisma, count };
+}
+
+describe("getSearchProgress — done semantics", () => {
+  it("COMPLETED with scored < total → not done", async () => {
+    const { prisma } = progressPrisma(25, 20);
+    const p = await getSearchProgress(prisma, fakeCtx("org_A"), "s1", "COMPLETED");
+    expect(p).toMatchObject({ total: 25, scored: 20, done: false, searchStatus: "COMPLETED" });
+  });
+
+  it("COMPLETED with scored === total → done", async () => {
+    const { prisma } = progressPrisma(25, 25);
+    expect((await getSearchProgress(prisma, fakeCtx("org_A"), "s1", "COMPLETED")).done).toBe(true);
+  });
+
+  it("PARTIAL with all leads scored → done", async () => {
+    const { prisma } = progressPrisma(10, 10);
+    expect((await getSearchProgress(prisma, fakeCtx("org_A"), "s1", "PARTIAL")).done).toBe(true);
+  });
+
+  it("terminal status with total === 0 → done", async () => {
+    const { prisma } = progressPrisma(0, 0);
+    expect((await getSearchProgress(prisma, fakeCtx("org_A"), "s1", "COMPLETED")).done).toBe(true);
+  });
+
+  it("PENDING with total 0 → not done", async () => {
+    const { prisma } = progressPrisma(0, 0);
+    expect((await getSearchProgress(prisma, fakeCtx("org_A"), "s1", "PENDING")).done).toBe(false);
+  });
+
+  it("RUNNING with total 0 → not done", async () => {
+    const { prisma } = progressPrisma(0, 0);
+    expect((await getSearchProgress(prisma, fakeCtx("org_A"), "s1", "RUNNING")).done).toBe(false);
+  });
+
+  it("FAILED with all leads scored → done", async () => {
+    const { prisma } = progressPrisma(5, 5);
+    expect((await getSearchProgress(prisma, fakeCtx("org_A"), "s1", "FAILED")).done).toBe(true);
+  });
+
+  it("FAILED with unscored leads → not done", async () => {
+    const { prisma } = progressPrisma(5, 3);
+    expect((await getSearchProgress(prisma, fakeCtx("org_A"), "s1", "FAILED")).done).toBe(false);
+  });
+});
+
+describe("getSearchProgress — tenant scoping & score filter", () => {
+  it("scopes both counts by org + deletedAt:null + searchId, and filters scored by score isNot null", async () => {
+    const { prisma, count } = progressPrisma(25, 20);
+    await getSearchProgress(prisma, fakeCtx("org_B"), "search_1", "COMPLETED");
+
+    expect(count).toHaveBeenCalledTimes(2);
+    const wheres = count.mock.calls.map((c) => c[0].where);
+
+    // both counts carry tenant scope + the search id
+    for (const w of wheres) {
+      expect(w.organizationId).toBe("org_B");
+      expect(w.deletedAt).toBeNull();
+      expect(w.searchId).toBe("search_1");
+    }
+
+    // exactly one of the two counts (the "scored" one) carries the score filter
+    const scoredWheres = wheres.filter((w) => "score" in w);
+    expect(scoredWheres).toHaveLength(1);
+    expect(scoredWheres[0]?.score).toEqual({ isNot: null });
   });
 });

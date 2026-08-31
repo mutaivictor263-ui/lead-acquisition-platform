@@ -214,3 +214,51 @@ export async function listLeads(
 
   return { leads: rows.map(mapLead), total, page: input.page, pageSize: input.pageSize };
 }
+
+// ── Search processing progress ───────────────────────────────────────────────
+
+/** Terminal discovery states — no further leads will be created after these. */
+const TERMINAL_SEARCH_STATUSES = new Set(["COMPLETED", "PARTIAL", "FAILED"]);
+
+export interface SearchProgress {
+  /** Leads in this search (tenant-scoped, non-deleted). */
+  total: number;
+  /** Of those, how many have a LeadScore (source of truth = the relation). */
+  scored: number;
+  /** True once discovery is terminal AND every lead is scored. */
+  done: boolean;
+  /** The Search.status the caller already has, echoed for the UI badge. */
+  searchStatus: string;
+}
+
+/**
+ * Derive processing progress for one search WITHOUT re-reading the Search row
+ * (the caller passes searchStatus). Two tenant-scoped counts: total leads, and
+ * leads that have a LeadScore. `done` reflects true pipeline completion —
+ * discovery finished (COMPLETED/PARTIAL/FAILED) and scoring has caught up —
+ * so it stays false while scoring lags a COMPLETED discovery.
+ *
+ * Tenant safety is inherited from ctx.where(), which injects organizationId +
+ * deletedAt: null on both counts; the searchId narrows to this one search.
+ */
+export async function getSearchProgress(
+  prisma: PrismaClient,
+  ctx: TenantContext,
+  searchId: string,
+  searchStatus: string,
+): Promise<SearchProgress> {
+  const base = ctx.where({ searchId }) as Prisma.LeadWhereInput;
+  const scoredWhere = { ...ctx.where({ searchId }), score: { isNot: null } } as Prisma.LeadWhereInput;
+
+  const [total, scored] = await Promise.all([
+    prisma.lead.count({ where: base }),
+    prisma.lead.count({ where: scoredWhere }),
+  ]);
+
+  const terminal = TERMINAL_SEARCH_STATUSES.has(searchStatus);
+  // Terminal + fully scored. total === 0 counts as fully scored, but only once
+  // the search is terminal (a PENDING/RUNNING search with no leads yet is not done).
+  const done = terminal && (total === 0 || scored >= total);
+
+  return { total, scored, done, searchStatus };
+}
