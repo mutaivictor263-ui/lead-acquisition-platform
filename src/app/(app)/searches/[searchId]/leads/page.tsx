@@ -4,8 +4,10 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db/client";
 import { requireCurrentTenant } from "@/lib/auth/current-user";
 import { leadListSchema, type LeadListInput } from "@/lib/validation/search";
-import { listLeads } from "@/lib/leads/list";
+import { listLeads, getSearchProgress } from "@/lib/leads/list";
 import { paginationInfo } from "@/lib/leads/pagination";
+import { StatusPoller } from "../../status-poller";
+import { progressLabel } from "./progress-label";
 
 // params + searchParams are async in Next 15.
 type Params = Promise<{ searchId: string }>;
@@ -78,11 +80,17 @@ export default async function LeadsPage({
   const { leads, total, page, pageSize } = await listLeads(prisma, ctx, input, searchId);
   const { totalPages, hasPrev, hasNext, from, to } = paginationInfo(total, page, pageSize);
 
+  // Pipeline progress (discovery done + scoring caught up?). Drives the badge and
+  // whether we keep auto-refreshing while enrichment/scoring finish.
+  const progress = await getSearchProgress(prisma, ctx, searchId, search.status);
+  const progressLabelText = progressLabel(progress);
+
   const hasFilters = Boolean(input.q) || typeof input.minScore === "number";
   const base = `/searches/${searchId}/leads`;
 
   return (
     <main style={{ fontFamily: "system-ui, sans-serif", padding: 32, maxWidth: 1100 }}>
+      <StatusPoller active={!progress.done} />
       <p style={{ marginBottom: 8 }}>
         <Link href="/searches">← Searches</Link>
       </p>
@@ -90,6 +98,18 @@ export default async function LeadsPage({
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 16 }}>
         <h1 style={{ margin: 0 }}>{search.name}</h1>
         <span style={{ color: statusColor[search.status] ?? "#333", fontWeight: 600 }}>{search.status}</span>
+        <span
+          style={{
+            fontSize: 13,
+            padding: "2px 8px",
+            borderRadius: 999,
+            border: "1px solid #ddd",
+            background: progress.done ? "#e9f7ef" : "#fff8e1",
+            color: "#444",
+          }}
+        >
+          {progressLabelText}
+        </span>
         <span style={{ color: "#666" }}>
           {search.leadsFound} / {search.leadsRequested} leads
         </span>
