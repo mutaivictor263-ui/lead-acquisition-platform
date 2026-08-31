@@ -56,9 +56,11 @@ export interface LeadDTO {
   phone: string | null;
   industry: string | null;
   companySize: string | null;
+  address: string | null;
   city: string | null;
   region: string | null;
   country: string | null;
+  googleProfileUrl: string | null;
   status: string;
   leadScore: number | null;
   score: LeadScoreDTO | null;
@@ -85,9 +87,11 @@ export interface LeadRowWithRelations {
   phone: string | null;
   industry: string | null;
   companySize: string | null;
+  address: string | null;
   city: string | null;
   region: string | null;
   country: string | null;
+  googleProfileUrl: string | null;
   status: string;
   leadScore: number | null;
   score: { score: number; quality: string; model: string | null; scoredAt: Date } | null;
@@ -138,9 +142,11 @@ export function mapLead(row: LeadRowWithRelations): LeadDTO {
     phone: row.phone,
     industry: row.industry,
     companySize: row.companySize,
+    address: row.address,
     city: row.city,
     region: row.region,
     country: row.country,
+    googleProfileUrl: row.googleProfileUrl,
     status: row.status,
     leadScore: row.leadScore,
     score: row.score
@@ -191,9 +197,11 @@ export async function listLeads(
         phone: true,
         industry: true,
         companySize: true,
+        address: true,
         city: true,
         region: true,
         country: true,
+        googleProfileUrl: true,
         status: true,
         leadScore: true,
         score: { select: { score: true, quality: true, model: true, scoredAt: true } },

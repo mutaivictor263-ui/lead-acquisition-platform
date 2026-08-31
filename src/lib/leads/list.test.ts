@@ -46,9 +46,11 @@ function sampleRow(overrides: Partial<LeadRowWithRelations> = {}): LeadRowWithRe
     phone: "+15550100",
     industry: null,
     companySize: null,
+    address: "123 Example St",
     city: "Nairobi",
     region: null,
     country: "KE",
+    googleProfileUrl: "https://maps.google.com/?cid=1",
     status: "NEW",
     leadScore: 40,
     score: { score: 40, quality: "Fair", model: "rules-v1", scoredAt: new Date("2026-08-01T00:00:00.000Z") },
@@ -127,6 +129,12 @@ describe("mapLead — scoring data", () => {
       scoredAt: "2026-08-01T00:00:00.000Z",
     });
     expect(dto.leadScore).toBe(40);
+  });
+
+  it("maps address and googleProfileUrl", () => {
+    const dto = mapLead(sampleRow());
+    expect(dto.address).toBe("123 Example St");
+    expect(dto.googleProfileUrl).toBe("https://maps.google.com/?cid=1");
   });
 
   it("returns null score for an unscored lead", () => {

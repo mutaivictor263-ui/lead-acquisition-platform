@@ -15,9 +15,11 @@ function lead(overrides: Partial<LeadDTO> = {}): LeadDTO {
     phone: "+15550100",
     industry: "Healthcare",
     companySize: "11-50",
+    address: "123 Example St",
     city: "Nairobi",
     region: "Nairobi County",
     country: "KE",
+    googleProfileUrl: "https://maps.google.com/?cid=1",
     status: "NEW",
     leadScore: 40,
     score: { score: 40, quality: "Fair", model: "rules-v1", scoredAt: "2026-08-01T00:00:00.000Z" },
@@ -27,20 +29,25 @@ function lead(overrides: Partial<LeadDTO> = {}): LeadDTO {
   };
 }
 
-const HEADER = "Business Name,Website,Email,Phone,Industry,Company Size,City,Region,Country,Status,Score,Quality";
+const HEADER =
+  "Business Name,Category,Website,Email,Phone,Industry,Company Size,Address,City,Region,Country,Google Maps URL,Socials,Status,Score,Quality";
 
 describe("CSV column contract", () => {
   it("has the exact documented column order", () => {
     expect(CSV_COLUMNS).toEqual([
       "Business Name",
+      "Category",
       "Website",
       "Email",
       "Phone",
       "Industry",
       "Company Size",
+      "Address",
       "City",
       "Region",
       "Country",
+      "Google Maps URL",
+      "Socials",
       "Status",
       "Score",
       "Quality",
@@ -55,11 +62,11 @@ describe("CSV column contract", () => {
 
 describe("leadsToCsv — normal values", () => {
   it("writes one row per lead with score and quality", () => {
-    const csv = leadsToCsv([lead()]);
+    const csv = leadsToCsv([lead({ socials: [{ platform: "LINKEDIN", url: "https://linkedin.com/company/acme" }] })]);
     const lines = csv.split("\r\n");
     expect(lines[0]).toBe(HEADER);
     expect(lines[1]).toBe(
-      "Acme Dentistry,https://acme.example.com,hi@acme.example.com,+15550100,Healthcare,11-50,Nairobi,Nairobi County,KE,NEW,40,Fair",
+      "Acme Dentistry,dentists,https://acme.example.com,hi@acme.example.com,+15550100,Healthcare,11-50,123 Example St,Nairobi,Nairobi County,KE,https://maps.google.com/?cid=1,https://linkedin.com/company/acme,NEW,40,Fair",
     );
     expect(lines).toHaveLength(2);
   });
@@ -74,21 +81,25 @@ describe("leadsToCsv — null / missing values", () => {
   it("renders null fields as empty cells (no 'null' text)", () => {
     const csv = leadsToCsv([
       lead({
+        category: null,
         website: null,
         websiteDomain: null,
         email: null,
         phone: null,
         industry: null,
         companySize: null,
+        address: null,
         city: null,
         region: null,
         country: null,
+        googleProfileUrl: null,
+        socials: [],
         leadScore: null,
         score: null,
       }),
     ]);
-    // Business Name only, then 11 empty fields.
-    expect(csv.split("\r\n")[1]).toBe("Acme Dentistry,,,,,,,,,NEW,,");
+    // Business Name + Status only; all 14 other columns empty.
+    expect(csv.split("\r\n")[1]).toBe("Acme Dentistry,,,,,,,,,,,,,NEW,,");
   });
 
   it("uses an empty Quality cell when the lead is unscored", () => {
@@ -136,6 +147,39 @@ describe("leadsToCsv — deterministic output", () => {
   it("produces identical output for identical input", () => {
     const input = [lead({ id: "a" }), lead({ id: "b", businessName: "Beta" })];
     expect(leadsToCsv(input)).toBe(leadsToCsv(input));
+  });
+});
+
+describe("leadsToCsv — new columns (category, address, maps, socials)", () => {
+  it("includes category, address, and Google Maps URL values", () => {
+    const row = leadsToCsv([lead()]).split("\r\n")[1] ?? "";
+    expect(row).toContain("dentists"); // Category
+    expect(row).toContain("123 Example St"); // Address
+    expect(row).toContain("https://maps.google.com/?cid=1"); // Google Maps URL
+  });
+
+  it("flattens multiple social URLs into one cell, preserving all of them", () => {
+    const csv = leadsToCsv([
+      lead({
+        socials: [
+          { platform: "LINKEDIN", url: "https://linkedin.com/company/acme" },
+          { platform: "INSTAGRAM", url: "https://instagram.com/acme" },
+        ],
+      }),
+    ]);
+    const cells = (csv.split("\r\n")[1] ?? "").split(",");
+    // Socials column is index 12 (0-based) in the fixed order.
+    expect(cells[12]).toBe("https://linkedin.com/company/acme https://instagram.com/acme");
+  });
+
+  it("renders an empty Socials cell when there are none", () => {
+    const cells = (leadsToCsv([lead({ socials: [] })]).split("\r\n")[1] ?? "").split(",");
+    expect(cells[12]).toBe("");
+  });
+
+  it("escapes an address containing a comma without breaking columns", () => {
+    const csv = leadsToCsv([lead({ address: "5th Ave, Suite 200", socials: [] })]);
+    expect(csv.split("\r\n")[1]).toContain('"5th Ave, Suite 200"');
   });
 });
 

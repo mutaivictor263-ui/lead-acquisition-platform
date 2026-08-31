@@ -17,18 +17,28 @@ import type { LeadDTO } from "./list";
 /** Fixed export column order. Header label + how to pull it from a LeadDTO. */
 const COLUMNS: { header: string; value: (lead: LeadDTO) => string | number | null }[] = [
   { header: "Business Name", value: (l) => l.businessName },
+  { header: "Category", value: (l) => l.category },
   { header: "Website", value: (l) => l.website ?? l.websiteDomain },
   { header: "Email", value: (l) => l.email },
   { header: "Phone", value: (l) => l.phone },
   { header: "Industry", value: (l) => l.industry },
   { header: "Company Size", value: (l) => l.companySize },
+  { header: "Address", value: (l) => l.address },
   { header: "City", value: (l) => l.city },
   { header: "Region", value: (l) => l.region },
   { header: "Country", value: (l) => l.country },
+  { header: "Google Maps URL", value: (l) => l.googleProfileUrl },
+  { header: "Socials", value: (l) => flattenSocials(l) },
   { header: "Status", value: (l) => l.status },
   { header: "Score", value: (l) => l.leadScore },
   { header: "Quality", value: (l) => (l.score ? l.score.quality : null) },
 ];
+
+/** Flatten a lead's social URLs into a single deterministic, escape-safe cell.
+ *  All URLs are preserved (space-separated, in the order returned); none -> "". */
+function flattenSocials(lead: LeadDTO): string {
+  return lead.socials.map((s) => s.url).join(" ");
+}
 
 /** The ordered header labels — exported so tests/callers can assert the contract. */
 export const CSV_COLUMNS: readonly string[] = COLUMNS.map((c) => c.header);

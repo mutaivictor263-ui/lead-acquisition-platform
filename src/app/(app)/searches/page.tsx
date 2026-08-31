@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { prisma } from "@/lib/db/client";
 import { requireCurrentTenant } from "@/lib/auth/current-user";
+import { StatusPoller } from "./status-poller";
 
 // searchParams is async in Next 15.
 type SearchParams = Promise<{ created?: string; queued?: string }>;
@@ -42,8 +43,12 @@ export default async function SearchesPage({ searchParams }: { searchParams: Sea
 
   const cell: React.CSSProperties = { padding: "8px 10px", borderBottom: "1px solid #eee", textAlign: "left" };
 
+  // Auto-refresh the list while any search is still being processed.
+  const hasActive = searches.some((s) => s.status === "PENDING" || s.status === "RUNNING");
+
   return (
     <main style={{ fontFamily: "system-ui, sans-serif", padding: 32, maxWidth: 900 }}>
+      <StatusPoller active={hasActive} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <h1>Searches</h1>
         <Link

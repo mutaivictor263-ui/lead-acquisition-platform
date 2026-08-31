@@ -150,11 +150,15 @@ export default async function LeadsPage({
             <thead>
               <tr>
                 <th style={cell}>Business</th>
+                <th style={cell}>Category</th>
                 <th style={cell}>Website</th>
                 <th style={cell}>Email</th>
                 <th style={cell}>Phone</th>
                 <th style={cell}>Industry</th>
                 <th style={cell}>Size</th>
+                <th style={cell}>Address</th>
+                <th style={cell}>Maps</th>
+                <th style={cell}>Socials</th>
                 <th style={cell}>Score</th>
                 <th style={cell}>Quality</th>
               </tr>
@@ -163,6 +167,7 @@ export default async function LeadsPage({
               {leads.map((l) => (
                 <tr key={l.id}>
                   <td style={{ ...cell, whiteSpace: "normal" }}>{l.businessName}</td>
+                  <td style={cell}>{l.category ?? "—"}</td>
                   <td style={cell}>
                     {l.website ? (
                       <a href={l.website} target="_blank" rel="noreferrer">
@@ -176,6 +181,28 @@ export default async function LeadsPage({
                   <td style={cell}>{l.phone ?? "—"}</td>
                   <td style={cell}>{l.industry ?? "—"}</td>
                   <td style={cell}>{l.companySize ?? "—"}</td>
+                  <td style={{ ...cell, whiteSpace: "normal" }}>{l.address ?? "—"}</td>
+                  <td style={cell}>
+                    {l.googleProfileUrl ? (
+                      <a href={l.googleProfileUrl} target="_blank" rel="noreferrer">
+                        Maps
+                      </a>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td style={cell}>
+                    {l.socials.length > 0
+                      ? l.socials.map((s, i) => (
+                          <span key={s.platform}>
+                            {i > 0 ? " · " : ""}
+                            <a href={s.url} target="_blank" rel="noreferrer">
+                              {s.platform.toLowerCase()}
+                            </a>
+                          </span>
+                        ))
+                      : "—"}
+                  </td>
                   <td style={cell}>{l.leadScore ?? "—"}</td>
                   <td style={{ ...cell, color: l.score ? qualityColor[l.score.quality] ?? "#333" : "#999", fontWeight: 600 }}>
                     {l.score?.quality ?? "—"}
@@ -210,4 +237,3 @@ export default async function LeadsPage({
     </main>
   );
 }
-

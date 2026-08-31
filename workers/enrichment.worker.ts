@@ -16,7 +16,14 @@ import { Worker } from "bullmq";
 
 import { connection, QUEUE, enqueueScoring, type EnrichmentJobData } from "../src/lib/jobs/queue";
 import { processEnrichment, mockEnrichmentProvider } from "../src/lib/jobs/enrichment";
+import { websiteEnrichmentProvider } from "../src/lib/providers/website_enrichment";
 import { prisma } from "../src/lib/db/client";
+
+// Real homepage enrichment runs only when ENABLE_WEBSITE_ENRICHMENT=true;
+// otherwise the mock provider (which fills nothing) stays in place.
+const enrichmentProvider = websiteEnrichmentProvider.isConfigured()
+  ? websiteEnrichmentProvider
+  : mockEnrichmentProvider;
 
 const worker = new Worker<EnrichmentJobData>(
   QUEUE.enrichment,
@@ -26,7 +33,7 @@ const worker = new Worker<EnrichmentJobData>(
     return processEnrichment(
       {
         db: prisma,
-        provider: mockEnrichmentProvider,
+        provider: enrichmentProvider,
         enqueueScoring: (data) => enqueueScoring(data),
         log: (event, data) => console.log(JSON.stringify({ event, ...data })),
       },
@@ -58,4 +65,4 @@ worker.on("completed", (job) => {
   console.log(JSON.stringify({ event: "enrichment.completed", leadId: job.data.leadId }));
 });
 
-console.log("enrichment worker started");
+console.log(JSON.stringify({ event: "enrichment.worker_started", provider: enrichmentProvider.key }));

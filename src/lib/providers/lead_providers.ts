@@ -11,6 +11,8 @@
  * is "given a query, return businesses I found".
  */
 
+import { GooglePlacesProvider } from "./google_places";
+
 export interface SearchParams {
   category: string;
   city?: string;
@@ -132,4 +134,8 @@ function titleCase(s: string): string {
 
 // Register built-ins. Real adapters (GooglePlacesProvider, ApifyProvider) get
 // registered here too once their API keys are wired — see docs/PROVIDERS.md.
+// Real Google Places discovery runs when GOOGLE_PLACES_API_KEY (or the
+// backward-compatible GOOGLE_MAPS_API_KEY) is set. Registered BEFORE the mock so
+// a configured Google key wins by default; the mock stays as the dev fallback.
+providerRegistry.register(new GooglePlacesProvider());
 providerRegistry.register(new MockLeadProvider());
