@@ -16,6 +16,7 @@ import { Worker } from "bullmq";
 
 import { connection, QUEUE, type ScoringJobData } from "../src/lib/jobs/queue";
 import { processScoring } from "../src/lib/jobs/scoring";
+import { shouldMarkFailed, markLeadFailed } from "../src/lib/jobs/failure";
 import { prisma } from "../src/lib/db/client";
 
 const worker = new Worker<ScoringJobData>(
@@ -38,7 +39,7 @@ const worker = new Worker<ScoringJobData>(
 
 // One lead failing must NOT fail the search. BullMQ retries the job per the
 // queue's defaultJobOptions; we only log. No Search.status write here.
-worker.on("failed", (job, err) => {
+worker.on("failed", async (job, err) => {
   console.error(
     JSON.stringify({
       event: "scoring.failed",
@@ -48,6 +49,13 @@ worker.on("failed", (job, err) => {
       error: err.message,
     }),
   );
+  // Durable FAILED only once retries are exhausted (not on a transient attempt).
+  if (job && shouldMarkFailed(job.attemptsMade, job.opts.attempts ?? 1)) {
+    await markLeadFailed(prisma, {
+      organizationId: job.data.organizationId,
+      leadId: job.data.leadId,
+    }).catch((e) => console.error(JSON.stringify({ event: "scoring.mark_failed_error", leadId: job.data.leadId, error: String(e) })));
+  }
 });
 
 worker.on("completed", (job) => {

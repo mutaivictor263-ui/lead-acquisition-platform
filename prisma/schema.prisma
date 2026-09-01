@@ -281,6 +281,13 @@ enum LeadStatus {
   LOST
 }
 
+enum LeadProcessingStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
 enum EmailStatus {
   UNKNOWN
   VALID
@@ -315,6 +322,10 @@ model Lead {
   googleProfileUrl String?
 
   status     LeadStatus @default(NEW)
+  /// Pipeline processing state: PENDING (created) → PROCESSING (enrichment
+  /// picked it up) → COMPLETED (scored) or FAILED (enrichment/scoring retries
+  /// exhausted). Distinct from `status` (sales lifecycle) and driven by workers.
+  processingStatus LeadProcessingStatus @default(PENDING)
   /// Denormalized copy of LeadScore.score for fast filter/sort/index on the
   /// lead table. Kept in sync whenever the scoring worker writes a LeadScore.
   leadScore  Int?
@@ -342,6 +353,7 @@ model Lead {
   @@index([organizationId, leadScore])
   @@index([organizationId, websiteDomain])
   @@index([organizationId, createdAt])
+  @@index([organizationId, searchId, processingStatus])
   @@map("leads")
 }
 

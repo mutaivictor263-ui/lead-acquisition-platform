@@ -102,7 +102,7 @@ export interface EnrichmentDb {
       where: { id: string; organizationId: string; deletedAt: null };
     }): Promise<EnrichmentLeadRow | null>;
     updateMany(args: {
-      where: { id: string; organizationId: string };
+      where: { id: string; organizationId: string; processingStatus?: { in: string[] } };
       data: Record<string, unknown>;
     }): Promise<{ count: number }>;
   };
@@ -171,6 +171,14 @@ export async function processEnrichment(
       scoringEnqueued: false,
     };
   }
+
+  // Mark the lead as processing the moment enrichment picks it up. Only PENDING
+  // or FAILED advance to PROCESSING — a COMPLETED lead is never downgraded (the
+  // filtered WHERE matches zero rows for it).
+  await db.lead.updateMany({
+    where: { id: leadId, organizationId, processingStatus: { in: ["PENDING", "FAILED"] } },
+    data: { processingStatus: "PROCESSING" },
+  });
 
   const data = await provider.enrich({
     id: lead.id,

@@ -16,6 +16,7 @@ import { Worker } from "bullmq";
 
 import { connection, QUEUE, enqueueScoring, type EnrichmentJobData } from "../src/lib/jobs/queue";
 import { processEnrichment, mockEnrichmentProvider } from "../src/lib/jobs/enrichment";
+import { shouldMarkFailed, markLeadFailed } from "../src/lib/jobs/failure";
 import { websiteEnrichmentProvider } from "../src/lib/providers/website_enrichment";
 import { prisma } from "../src/lib/db/client";
 
@@ -49,7 +50,7 @@ const worker = new Worker<EnrichmentJobData>(
 // the queue's defaultJobOptions (3 attempts, exponential backoff); we only log.
 // Deliberately NO Search.status write here — unlike the discovery worker, an
 // enrichment failure is isolated to its single lead.
-worker.on("failed", (job, err) => {
+worker.on("failed", async (job, err) => {
   console.error(
     JSON.stringify({
       event: "enrichment.failed",
@@ -59,6 +60,13 @@ worker.on("failed", (job, err) => {
       error: err.message,
     }),
   );
+  // Durable FAILED only once retries are exhausted (not on a transient attempt).
+  if (job && shouldMarkFailed(job.attemptsMade, job.opts.attempts ?? 1)) {
+    await markLeadFailed(prisma, {
+      organizationId: job.data.organizationId,
+      leadId: job.data.leadId,
+    }).catch((e) => console.error(JSON.stringify({ event: "enrichment.mark_failed_error", leadId: job.data.leadId, error: String(e) })));
+  }
 });
 
 worker.on("completed", (job) => {

@@ -114,6 +114,10 @@ export interface ScoringDb {
       where: { id: string; organizationId: string; deletedAt: null };
     }): Promise<ScoringLeadRow | null>;
     update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<unknown>;
+    updateMany(args: {
+      where: { id: string; organizationId: string };
+      data: Record<string, unknown>;
+    }): Promise<{ count: number }>;
   };
   leadContact: {
     findMany(args: { where: { leadId: string }; select: { id: true } }): Promise<{ id: string }[]>;
@@ -192,7 +196,12 @@ export async function processScoring(
 
   // ── Denormalized copy on the lead (schema documents this mirror) ───────────
   // Tenant-safe: reached only after the scoped read above confirmed ownership.
-  await db.lead.update({ where: { id: leadId }, data: { leadScore: score } });
+  // Denormalized score mirror + mark the lead COMPLETED in one tenant-scoped
+  // write, so a successful scoring atomically completes the lead.
+  await db.lead.updateMany({
+    where: { id: leadId, organizationId },
+    data: { leadScore: score, processingStatus: "COMPLETED" },
+  });
 
   // ── Audit trail ───────────────────────────────────────────────────────────
   await db.leadActivity.create({
