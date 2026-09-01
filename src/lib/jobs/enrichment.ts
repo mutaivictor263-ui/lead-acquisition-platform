@@ -20,7 +20,7 @@
  * scoring. The fact that mock enrichment ran is logged and recorded.
  */
 
-import type { SocialPlatform } from "@prisma/client";
+import type { SocialPlatform, LeadProcessingStatus } from "@prisma/client";
 
 // ── Provider abstraction (mirrors lead_providers.ts) ─────────────────────────
 
@@ -102,7 +102,7 @@ export interface EnrichmentDb {
       where: { id: string; organizationId: string; deletedAt: null };
     }): Promise<EnrichmentLeadRow | null>;
     updateMany(args: {
-      where: { id: string; organizationId: string; processingStatus?: { in: string[] } };
+      where: { id: string; organizationId: string; processingStatus?: { in: LeadProcessingStatus[] } };
       data: Record<string, unknown>;
     }): Promise<{ count: number }>;
   };
